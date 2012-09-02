@@ -1438,6 +1438,52 @@ static sox_bool overwrite_permitted(char const * filename)
   return c == 'y' || c == 'Y';
 }
 
+static char *fndup_script(const char *numerator_script)
+{
+  /* Calls external script and returns filename for new file
+    */
+
+  FILE *st = popen(numerator_script, "r");
+  if (!st)
+    {
+      lsx_warn("Could not execute %s script", numerator_script);
+      return NULL;
+    }
+
+  char  *efn = lsx_malloc((size_t)FILENAME_MAX);
+  char  *s = fgets(efn, FILENAME_MAX, st);
+
+  if (!s && ferror(st))
+    {
+      lsx_warn("Could not get filename from %s script", numerator_script);
+      free(efn);
+      efn = NULL;
+    }
+
+  if (efn)
+    {
+      // cut off carriage return if present
+      char *end = strchr(efn, '\n');
+      if (end)
+	{
+	  size_t len = end - efn;
+
+	  // copy to new string already without trailing newline
+	  char *c = lsx_malloc((len + 1) * sizeof(*c));
+	  strncpy(c, efn, len);
+	  c[len] = '\0';
+	  free(efn);
+	  efn = c;
+	}
+
+      //lsx_warn("filename=%s", efn);
+    }
+
+  pclose(st);
+
+  return efn;
+}
+
 static char *fndup_with_count(const char *filename, size_t count)
 {
     char *expand_fn, *efn;
@@ -1551,9 +1597,20 @@ static void open_output_file(void)
   }
 
   if (output_method == sox_multiple)
-    expand_fn = fndup_with_count(ofile->filename, ++output_count);
+    {
+      if (ofile->filename[0] == '@') /* read output filename from script? */
+	expand_fn = fndup_script(ofile->filename + 1); /* skip @ symbol */
+      else
+	expand_fn = fndup_with_count(ofile->filename, ++output_count);
+    }
   else
     expand_fn = lsx_strdup(ofile->filename);
+
+  /* Exit if filename could not be constructed
+    */
+  if (!expand_fn)
+    exit(2);
+
   ofile->ft = sox_open_write(expand_fn, &ofile->signal, &ofile->encoding,
       ofile->filetype, &oob, overwrite_permitted);
   sox_delete_comments(&oob.comments);
@@ -2527,7 +2584,7 @@ static char const * device_name(char const * const type)
       || !strcmp(type, "waveaudio")
       )
     name = "default";
-  
+
   return name? from_env? from_env : name : NULL;
 }
 
